@@ -3,7 +3,7 @@ import orjson
 import aio_pika
 
 from dataclasses import dataclass
-from typing import Optional, Coroutine, Callable, Any
+from typing import Optional, Callable
 from pprint import pprint
 
 
@@ -30,9 +30,10 @@ class RabbitSession:
     def __init__(
             self,
             config: RabbitConfig,
-            on_event: Callable[[Any], Coroutine[Any, Any, None]],
+            on_event: Callable[[aio_pika.IncomingMessage], None],
     ):
         self.config = config
+        self._stop_serving = False
         self._on_event = on_event
 
         self._connection: Optional[aio_pika.RobustConnection] = None
@@ -71,19 +72,15 @@ class RabbitSession:
             )
 
         async with self._queue.iterator() as queue_iter:
-            # Cancel consuming after __aexit__
-            async for message in queue_iter:
-                async with message.process():
-                    await self._on_event(message.body)
-
-                    if self._queue.name in message.body.decode():
-                        break
+            while not self._stop_serving:
+                message = await queue_iter.__anext__()
+                self._on_event(message)
 
         self._queue = None
 
 
-async def on_event_receive(body: bytes):
-    pprint(orjson.loads(body))
+def on_event_receive(msg: aio_pika.Message):
+    pprint(orjson.loads(msg.body))
 
 
 async def main():
