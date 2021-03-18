@@ -28,14 +28,16 @@ class RabbitSession:
     QUEUE_NAME = "gateway.recv"
 
     def __init__(
-            self,
-            config: RabbitConfig,
-            on_event: Callable[[aio_pika.IncomingMessage], None],
+        self,
+        config: RabbitConfig,
+        on_event,
     ):
         self.config = config
+        self.loop = asyncio.get_event_loop()
+
         self._stop_serving = False
         self._on_event = on_event
-
+        self._serving_task: Optional[asyncio.Task] = None
         self._connection: Optional[aio_pika.RobustConnection] = None
         self._channel: Optional[aio_pika.Channel] = None
         self._queue: Optional[aio_pika.Queue] = None
@@ -55,6 +57,8 @@ class RabbitSession:
         )
 
     async def shutdown(self):
+        self._stop_serving = True
+
         if self._channel is not None:
             await self._channel.close()
 
@@ -64,7 +68,14 @@ class RabbitSession:
         self._channel = None
         self._connection = None
 
-    async def serve_events(self):
+    async def wait(self):
+        await self._serving_task
+
+    def serve_events(self):
+        self._serving_task = asyncio.create_task(self._serve_events())
+        return self._serving_task
+
+    async def _serve_events(self):
         if self._queue is None:
             raise TypeError(
                 "queue connection is None, "
@@ -74,31 +85,7 @@ class RabbitSession:
         async with self._queue.iterator() as queue_iter:
             while not self._stop_serving:
                 message = await queue_iter.__anext__()
-                self._on_event(message)
+                self.loop.create_task(self._on_event(message))
 
         self._queue = None
 
-
-def on_event_receive(msg: aio_pika.Message):
-    pprint(orjson.loads(msg.body))
-
-
-async def main():
-    config = RabbitConfig(
-        username="guest",
-        password="guest",
-    )
-
-    sess = RabbitSession(
-        config,
-        on_event_receive,
-    )
-
-    await sess.connect()
-    await sess.serve_events()
-
-
-if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
-    loop.close()
