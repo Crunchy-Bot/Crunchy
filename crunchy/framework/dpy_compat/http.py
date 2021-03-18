@@ -56,6 +56,7 @@ async def json_or_text(response):
         # Thanks Cloudflare
         pass
 
+
     return text
 
 
